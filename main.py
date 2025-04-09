@@ -103,9 +103,13 @@ def run_statbot():
         time.sleep(60)
 
 if __name__ == "__main__":
-    run_statbot()
-if __name__ == "__main__":
     print("📦 TELEGRAM_BOT_TOKEN:", TELEGRAM_BOT_TOKEN)
     print("📦 CHAT_ID:", CHAT_ID)
-    send_telegram_message("✅ Statbot is live and connected to Telegram!")
+    
+    success = send_telegram_message("✅ Statbot is live and connected to Telegram!")
+    if success:
+        logging.info("📤 Sending: ✅ Statbot is live and connected to Telegram!")
+    else:
+        logging.error("🚨 Telegram test message failed to send at startup")
+
     run_statbot()
