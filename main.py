@@ -104,4 +104,8 @@ def run_statbot():
 
 if __name__ == "__main__":
     run_statbot()
-    send_telegram_message("✅ Statbot test message — we're live!")
+if __name__ == "__main__":
+    print("📦 TELEGRAM_BOT_TOKEN:", TELEGRAM_BOT_TOKEN)
+    print("📦 CHAT_ID:", CHAT_ID)
+    send_telegram_message("✅ Statbot is live and connected to Telegram!")
+    run_statbot()
