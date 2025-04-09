@@ -33,6 +33,8 @@ def send_telegram_message(message):
     response = requests.post(TELEGRAM_URL, data=payload)
     if not response.ok:
         logging.error(f"❌ Failed to send message: {response.text}")
+    else:
+        logging.info(f"📤 Sent: {message}")
     return response.ok
 
 # Get live matches
@@ -72,7 +74,7 @@ def run_statbot():
             home_team = match["teams"]["home"]["name"]
             away_team = match["teams"]["away"]["name"]
             goals = match["goals"]
-            minute = match["fixture"]["status"]["elapsed"]
+            minute = match["fixture"]["status"]["elapsed"] or 0
             home_goals = goals["home"]
             away_goals = goals["away"]
             alert_key = f"{fixture_id}_{home_goals}_{away_goals}"
@@ -89,4 +91,19 @@ def run_statbot():
             if preds["Home Win"]:
                 send_telegram_message(f"🏠 {home_team} vs {away_team}: Home Win Expected!")
             if preds["Draw"]:
-                send_telegram_message(f"⚖️ {home_team} vs {away_team}: 
+                send_telegram_message(f"⚖️ {home_team} vs {away_team}: Draw is on the cards!")
+
+            next_goal = predict_next_goal(minute, home_goals, away_goals)
+            if next_goal == 1:
+                send_telegram_message(f"🔮 Next Goal Prediction: {home_team} likely to score next!")
+            elif next_goal == 2:
+                send_telegram_message(f"🔮 Next Goal Prediction: {away_team} likely to score next!")
+
+            sent_alerts.add(alert_key)
+
+        time.sleep(60)
+
+if __name__ == "__main__":
+    send_telegram_message("✅ Statbot is live and connected to Telegram!")
+    run_statbot()
+    
