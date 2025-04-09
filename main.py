@@ -104,3 +104,4 @@ def run_statbot():
 
 if __name__ == "__main__":
     run_statbot()
+    send_telegram_message("✅ Statbot test message — we're live!")
