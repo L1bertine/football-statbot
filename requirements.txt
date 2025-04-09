@@ -2,5 +2,6 @@ requests
 python-telegram-bot==13.15
 python-dotenv
 joblib
-scikit-learn
 pandas
+scikit-learn==1.6.1
+numpy
