@@ -1,23 +1,24 @@
 import os
-import requests
 import time
+import requests
 import joblib
-import pandas as pd
+import numpy as np
 import logging
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
-TELEGRAM_BOT_TOKEN = f'bot{os.getenv("TELEGRAM_BOT_TOKEN")}'
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# Logging
+# Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# API Config
+# API URLs
 API_BASE_URL = "https://v3.football.api-sports.io"
-TELEGRAM_URL = f"https://api.telegram.org/{TELEGRAM_BOT_TOKEN}/sendMessage"
+TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 HEADERS = {"x-apisports-key": API_KEY}
 
 # Load ML models
@@ -27,17 +28,15 @@ model_draw = joblib.load("draw_model.pkl")
 model_over25 = joblib.load("over25_model.pkl")
 model_next_goal = joblib.load("next_goal_model.pkl")
 
-# Send message to Telegram
+# Telegram alert sender
 def send_telegram_message(message):
     payload = {"chat_id": CHAT_ID, "text": message}
     response = requests.post(TELEGRAM_URL, data=payload)
     if not response.ok:
         logging.error(f"❌ Failed to send message: {response.text}")
-    else:
-        logging.info(f"📤 Sent: {message}")
     return response.ok
 
-# Get live matches
+# API call to fetch live matches
 def get_live_matches():
     url = f"{API_BASE_URL}/fixtures?live=all"
     response = requests.get(url, headers=HEADERS)
@@ -47,9 +46,9 @@ def get_live_matches():
         logging.error(f"Error fetching live matches: {response.status_code}")
         return []
 
-# Run standard match predictions
+# ML predictions using current goals
 def run_match_predictions(home_goals, away_goals):
-    features = pd.DataFrame({'home_goals': [home_goals], 'away_goals': [away_goals]})
+    features = np.array([[home_goals, away_goals]])
     return {
         "BTTS": model_btts.predict(features)[0],
         "Home Win": model_home_win.predict(features)[0],
@@ -57,24 +56,36 @@ def run_match_predictions(home_goals, away_goals):
         "Over 2.5": model_over25.predict(features)[0]
     }
 
-# Run next goal prediction
+# ML prediction for next goal
 def predict_next_goal(minute, home_goals, away_goals):
     goal_diff = home_goals - away_goals
-    features = pd.DataFrame({'minute': [minute], 'goal_diff': [goal_diff]})
+    features = np.array([[minute, goal_diff]])
     return model_next_goal.predict(features)[0]
 
-# Main statbot loop
+# Main bot loop
 def run_statbot():
     sent_alerts = set()
+
     while True:
+        # Restrict bot to run between 19:45 and 22:30
+        now = datetime.now().time()
+        start_time = datetime.strptime("19:45", "%H:%M").time()
+        end_time = datetime.strptime("22:30", "%H:%M").time()
+
+        if not (start_time <= now <= end_time):
+            logging.info("⏱ Outside match alert window. Sleeping for 5 minutes...")
+            time.sleep(300)
+            continue
+
         logging.info("🔍 Checking for live matches...")
         matches = get_live_matches()
+
         for match in matches:
             fixture_id = match["fixture"]["id"]
             home_team = match["teams"]["home"]["name"]
             away_team = match["teams"]["away"]["name"]
             goals = match["goals"]
-            minute = match["fixture"]["status"]["elapsed"] or 0
+            minute = match["fixture"]["status"]["elapsed"]
             home_goals = goals["home"]
             away_goals = goals["away"]
             alert_key = f"{fixture_id}_{home_goals}_{away_goals}"
@@ -104,6 +115,8 @@ def run_statbot():
         time.sleep(60)
 
 if __name__ == "__main__":
+    logging.info("📦 TELEGRAM_BOT_TOKEN: ✅")
+    logging.info("📦 CHAT_ID: ✅")
     send_telegram_message("✅ Statbot is live and connected to Telegram!")
     run_statbot()
     
