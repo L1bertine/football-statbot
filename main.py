@@ -14,20 +14,15 @@ API_KEY = os.getenv("API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# Logging
+# Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# API Setup
+# API setup
 API_BASE_URL = "https://v3.football.api-sports.io"
 TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 HEADERS = {"x-apisports-key": API_KEY}
 
-# League filters
-ALLOWED_LEAGUES = [2, 3, 39]  # Champions League, Europa League, Premier League
-MAX_API_CALLS = 95
-api_call_count = 0
-
-# Load models
+# Load ML models
 try:
     model_btts = joblib.load("btts_model.pkl")
     model_home_win = joblib.load("home_win_model.pkl")
@@ -40,71 +35,51 @@ except Exception as e:
 
 def send_telegram_message(message):
     payload = {"chat_id": CHAT_ID, "text": message}
-    try:
-        response = requests.post(TELEGRAM_URL, data=payload)
-        if not response.ok:
-            logging.error(f"❌ Failed to send message: {response.text}")
-    except Exception as e:
-        logging.error(f"❌ Telegram Error: {e}")
+    response = requests.post(TELEGRAM_URL, data=payload)
+    if not response.ok:
+        logging.error(f"❌ Failed to send message: {response.text}")
+    return response.ok
+
+def get_live_matches():
+    url = f"{API_BASE_URL}/fixtures?live=all&timezone=Europe/London"
+    response = requests.get(url, headers=HEADERS)
+    if response.status_code == 200:
+        return response.json().get("response", [])
+    else:
+        logging.error(f"❌ Error fetching live matches: {response.status_code}")
+        return []
 
 def within_runtime_hours():
     now = datetime.now(timezone("Europe/London")).time()
-    start = dtime(19, 45)
-    end = dtime(22, 30)
-    return start <= now <= end
-
-def get_live_matches():
-    global api_call_count
-    if api_call_count >= MAX_API_CALLS:
-        send_telegram_message("🧯 API call limit reached. Shutting down to avoid suspension.")
-        logging.warning("API call limit reached.")
-        exit()
-
-    url = f"{API_BASE_URL}/fixtures?live=all&timezone=Europe/London"
-    response = requests.get(url, headers=HEADERS)
-    api_call_count += 1
-    logging.debug(f"📡 API Response ({api_call_count}): {response.status_code}")
-
-    if response.status_code == 403 or "suspended" in response.text:
-        send_telegram_message("🚫 API key appears suspended. Shutting down.")
-        exit()
-
-    if response.status_code == 200:
-        all_matches = response.json().get("response", [])
-        return [match for match in all_matches if match.get("league", {}).get("id") in ALLOWED_LEAGUES]
-    else:
-        logging.error(f"❌ Error fetching matches: {response.status_code}")
-        return []
+    start_time = dtime(19, 45)
+    end_time = dtime(22, 30)
+    return start_time <= now <= end_time
 
 def run_statbot():
     sent_alerts = set()
 
-    # Notify on start
     if within_runtime_hours():
-        send_telegram_message("✅ Statbot is live and filtering top competitions!")
+        send_telegram_message("✅ Statbot is live and monitoring!")
     else:
-        send_telegram_message("🕒 Bot started outside hours. Waiting until 19:45 UK...")
+        logging.info("⏳ Waiting for 19:45 UK time to start...")
+        send_telegram_message("🕒 Statbot running but waiting for 19:45 UK time to activate alerts.")
 
     while True:
         if not within_runtime_hours():
-            logging.info("⏳ Outside active hours. Sleeping 60s...")
+            logging.info("⏰ Outside permitted hours (19:45–22:30 UK) — sleeping...")
             time.sleep(60)
             continue
 
-        logging.info("🔍 Checking for live filtered matches...")
+        logging.info("🔍 Checking for live matches...")
         matches = get_live_matches()
 
         for match in matches:
-            fixture = match.get("fixture", {})
-            teams = match.get("teams", {})
-            goals = match.get("goals", {})
-
-            fixture_id = fixture.get("id")
-            home_team = teams.get("home", {}).get("name")
-            away_team = teams.get("away", {}).get("name")
-            minute = fixture.get("status", {}).get("elapsed")
-            home_goals = goals.get("home")
-            away_goals = goals.get("away")
+            fixture_id = match["fixture"]["id"]
+            home_team = match["teams"]["home"]["name"]
+            away_team = match["teams"]["away"]["name"]
+            minute = match["fixture"]["status"]["elapsed"]
+            home_goals = match["goals"]["home"]
+            away_goals = match["goals"]["away"]
 
             if None in (fixture_id, home_team, away_team, minute, home_goals, away_goals):
                 continue
@@ -113,32 +88,30 @@ def run_statbot():
             if alert_key in sent_alerts:
                 continue
 
-            # Run predictions
-            features_score = np.array([[home_goals, away_goals]])
+            features = np.array([[home_goals, away_goals]])
             preds = {
-                "BTTS": bool(model_btts.predict(features_score)[0]),
-                "Home Win": bool(model_home_win.predict(features_score)[0]),
-                "Draw": bool(model_draw.predict(features_score)[0]),
-                "Over 2.5": bool(model_over25.predict(features_score)[0])
+                "BTTS": bool(model_btts.predict(features)[0]),
+                "Home Win": bool(model_home_win.predict(features)[0]),
+                "Draw": bool(model_draw.predict(features)[0]),
+                "Over 2.5": bool(model_over25.predict(features)[0])
             }
 
-            # Send alerts
             if preds["Over 2.5"]:
-                send_telegram_message(f"🔥 {home_team} vs {away_team}: Expected Over 2.5 Goals!")
+                send_telegram_message(f"🔥 {home_team} vs {away_team}: Over 2.5 Goals expected")
             if preds["BTTS"]:
-                send_telegram_message(f"⚔️ {home_team} vs {away_team}: BTTS Likely!")
+                send_telegram_message(f"⚔️ {home_team} vs {away_team}: BTTS Likely")
             if preds["Home Win"]:
-                send_telegram_message(f"🏠 {home_team} vs {away_team}: Home Win Expected!")
+                send_telegram_message(f"🏠 {home_team} likely to win vs {away_team}")
             if preds["Draw"]:
-                send_telegram_message(f"⚖️ {home_team} vs {away_team}: Draw is on the cards!")
+                send_telegram_message(f"⚖️ {home_team} vs {away_team}: Draw looking likely")
 
-            # Next goal prediction
+            # Next Goal Prediction
             goal_diff = home_goals - away_goals
             next_goal = model_next_goal.predict(np.array([[minute, goal_diff]]))[0]
             if next_goal == 1:
-                send_telegram_message(f"🔮 Next Goal: {home_team} likely to score next!")
+                send_telegram_message(f"🔮 Next Goal Prediction: {home_team} likely to score next!")
             elif next_goal == 2:
-                send_telegram_message(f"🔮 Next Goal: {away_team} likely to score next!")
+                send_telegram_message(f"🔮 Next Goal Prediction: {away_team} likely to score next!")
 
             sent_alerts.add(alert_key)
 
